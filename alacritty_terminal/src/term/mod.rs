@@ -1789,15 +1789,12 @@ impl<T: EventListener> Handler for Term<T> {
                 if self.mode.contains(TermMode::ALT_SCREEN) {
                     self.grid.reset_region(..);
                 } else {
-                    let old_offset = self.grid.display_offset();
-
-                    self.grid.clear_viewport();
-
-                    // Compute number of lines scrolled by clearing the viewport.
-                    let lines = self.grid.display_offset().saturating_sub(old_offset);
-
-                    self.vi_mode_cursor.point.line =
-                        (self.vi_mode_cursor.point.line - lines).grid_clamp(self, Boundary::Grid);
+                    // Clear scrollback and visible area without pushing stale
+                    // content into history. Normal-screen TUI apps (e.g., ink)
+                    // repaint everything after CSI 2J — old scrollback is
+                    // duplicate content from previous renders.
+                    self.grid.clear_history();
+                    self.grid.reset_region(..);
                 }
 
                 self.selection = None;
