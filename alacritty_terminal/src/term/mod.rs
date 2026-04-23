@@ -1786,16 +1786,14 @@ impl<T: EventListener> Handler for Term<T> {
                 self.selection = self.selection.take().filter(|s| !s.intersects_range(range));
             },
             ansi::ClearMode::All => {
-                if self.mode.contains(TermMode::ALT_SCREEN) {
-                    self.grid.reset_region(..);
-                } else {
-                    // Clear scrollback and visible area without pushing stale
-                    // content into history. Normal-screen TUI apps (e.g., ink)
-                    // repaint everything after CSI 2J — old scrollback is
-                    // duplicate content from previous renders.
-                    self.grid.clear_history();
-                    self.grid.reset_region(..);
-                }
+                // Clear viewport in place via reset_region. We deliberately
+                // do NOT call clear_viewport (which scrolls visible content
+                // into history, producing ghost duplicates when TUI apps like
+                // ink repaint after CSI 2J), nor clear_history (which destroys
+                // the user's scrollback on every full repaint, including the
+                // one CC sends after SIGWINCH on every drawer toggle / resize).
+                // reset_region clears cells in place — no push, no pull.
+                self.grid.reset_region(..);
 
                 self.selection = None;
             },
