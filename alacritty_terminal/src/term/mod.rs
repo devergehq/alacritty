@@ -327,6 +327,16 @@ pub struct Term<T> {
 
     /// Config directly for the terminal.
     config: Config,
+
+    /// History size at the moment of the most recent CSI 2J in primary screen,
+    /// recorded *after* that 2J's trim. `None` until the first 2J fires.
+    ///
+    /// On each primary-screen CSI 2J, lines accumulated in history since the
+    /// previous 2J are dropped from the oldest end — they belong to the
+    /// previous TUI repaint and are about to be re-emitted by the new one.
+    /// This prevents duplicate scrollback build-up when ink-style apps
+    /// repaint their full Static log on every full-screen clear.
+    history_size_at_last_2j: Option<usize>,
 }
 
 /// Configuration options for the [`Term`].
@@ -441,6 +451,7 @@ impl<T> Term<T> {
             selection: Default::default(),
             title: Default::default(),
             mode: Default::default(),
+            history_size_at_last_2j: None,
         }
     }
 
@@ -1786,14 +1797,26 @@ impl<T: EventListener> Handler for Term<T> {
                 self.selection = self.selection.take().filter(|s| !s.intersects_range(range));
             },
             ansi::ClearMode::All => {
-                // Clear viewport in place via reset_region. We deliberately
-                // do NOT call clear_viewport (which scrolls visible content
-                // into history, producing ghost duplicates when TUI apps like
-                // ink repaint after CSI 2J), nor clear_history (which destroys
-                // the user's scrollback on every full repaint, including the
-                // one CC sends after SIGWINCH on every drawer toggle / resize).
-                // reset_region clears cells in place — no push, no pull.
-                self.grid.reset_region(..);
+                if self.mode.contains(TermMode::ALT_SCREEN) {
+                    self.grid.reset_region(..);
+                } else {
+                    // Primary-screen CSI 2J: ink-style TUIs (e.g. CC) repaint
+                    // their full Static log on every full-screen clear, which
+                    // pushes the same lines into history again. To avoid
+                    // duplicate scrollback build-up without losing the user's
+                    // history outright on every repaint, we trim retroactively:
+                    // on each 2J, drop the lines that were in history at the
+                    // *previous* 2J — by now the TUI has had its chance to
+                    // re-emit them, so the older copy is stale.
+                    //
+                    // First 2J of a session: nothing to trim, so existing
+                    // pre-TUI scrollback (e.g. shell output) survives one cycle.
+                    if let Some(prev) = self.history_size_at_last_2j {
+                        self.grid.trim_oldest_history(prev);
+                    }
+                    self.grid.reset_region(..);
+                    self.history_size_at_last_2j = Some(self.grid.history_size());
+                }
 
                 self.selection = None;
             },
@@ -1843,6 +1866,7 @@ impl<T: EventListener> Handler for Term<T> {
         self.vi_mode_cursor = Default::default();
         self.keyboard_mode_stack = Default::default();
         self.inactive_keyboard_mode_stack = Default::default();
+        self.history_size_at_last_2j = None;
 
         // Preserve vi mode across resets.
         self.mode &= TermMode::VI;

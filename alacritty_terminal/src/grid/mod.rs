@@ -388,6 +388,21 @@ impl<T> Grid<T> {
         self.display_offset = 0;
     }
 
+    /// Drop up to `count` of the oldest lines from history.
+    ///
+    /// Used by the CSI 2J handler in primary screen to retroactively trim
+    /// the previous repaint's content once a fresh repaint has arrived,
+    /// preventing TUI re-renders from accumulating duplicate scrollback.
+    #[inline]
+    pub fn trim_oldest_history(&mut self, count: usize) {
+        let count = count.min(self.history_size());
+        if count == 0 {
+            return;
+        }
+        self.raw.shrink_lines(count);
+        self.display_offset = self.display_offset.min(self.history_size());
+    }
+
     /// This is used only for initializing after loading ref-tests.
     #[inline]
     pub fn initialize_all(&mut self)
